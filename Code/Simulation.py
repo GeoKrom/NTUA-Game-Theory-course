@@ -1,39 +1,74 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.linalg import solve_continuous_are
 
-# Parameters
+# =========================================================
+# 🔷 System parameters
+# =========================================================
 N = 5
 dim = 2
 T = 10
-dt = 0.01
+dt = 0.001
 steps = int(T/dt)
-alpha = 1.0
+sigma = 0.1  # noise
 
-# Individual targets (different for each agent)
-c = np.random.randn(N, dim) * 5
+# Linear system
+A = np.array([[0, 1],
+              [-1, -1]])
 
-# Initial conditions
+B = np.array([[0],
+              [1]])
+
+# LQR weights
+Q = np.eye(dim)
+R = np.array([[10]])
+
+# =========================================================
+# 🔷 Solve Riccati Equation
+# =========================================================
+P = solve_continuous_are(A, B, Q, R)
+
+K = np.linalg.inv(R) @ B.T @ P
+
+print("Riccati P:\n", P)
+print("Feedback gain K:\n", K)
+
+# =========================================================
+# 🔷 Multi-agent setup
+# =========================================================
 x = np.random.randn(N, dim)
 
 trajectory = np.zeros((steps, N, dim))
-u_traj = np.zeros((steps, N, dim))
+u_traj = np.zeros((steps, N, 1))
 
-def neighbors(i):
-    return [j for j in range(N) if j != i]
+# Fully connected Laplacian
+L = N * np.eye(N) - np.ones((N, N))
 
-# Simulation
+# =========================================================
+# 🔷 Simulation
+# =========================================================
 for k in range(steps):
     x_dot = np.zeros_like(x)
     
     for i in range(N):
-        interaction = sum(x[i] - x[j] for j in neighbors(i))
-        x_dot[i] = -((x[i] - c[i]) + alpha * interaction)
-    
-    u = x_dot.copy()
+        # consensus term
+        consensus = np.zeros(dim)
+        for j in range(N):
+            if j != i:
+                consensus += (x[i] - x[j])
+        
+        # LQR-based control
+        u_i = -K @ consensus   # shape (1,)
+        
+        # noise
+        w = sigma * np.random.randn(dim)
+        
+        # dynamics
+        x_dot[i] = A @ x[i] + B.flatten() * u_i + w
+        
+        u_traj[k, i, 0] = u_i
     
     trajectory[k] = x
-    u_traj[k] = u
-    
     x = x + dt * x_dot
 
 time = np.linspace(0, T, steps)
@@ -44,44 +79,35 @@ time = np.linspace(0, T, steps)
 plt.figure()
 for i in range(N):
     plt.plot(trajectory[:, i, 0], trajectory[:, i, 1])
-    plt.scatter(c[i,0], c[i,1], marker='x')  # targets
-plt.title("Agent Trajectories")
+plt.title("LQR-based Consensus Nash Trajectories")
 plt.xlabel("x")
 plt.ylabel("y")
 plt.grid()
 
 # =========================================================
-# 🔷 FIGURE 2: X components
+# 🔷 FIGURE 2: States
 # =========================================================
 plt.figure()
 for i in range(N):
     plt.plot(time, trajectory[:, i, 0])
-plt.title("States $x_i(t)$")
-plt.xlabel("Time (s)")
-plt.ylabel("x")
+plt.title("x_i(t)")
 plt.grid()
 
-# =========================================================
-# 🔷 FIGURE 3: Y components
-# =========================================================
 plt.figure()
 for i in range(N):
     plt.plot(time, trajectory[:, i, 1])
-plt.title("States $y_i(t)$")
-plt.xlabel("Time (s)")
-plt.ylabel("y")
+plt.title("y_i(t)")
 plt.grid()
 
 # =========================================================
-# 🔷 FIGURE 4: Control norm
+# 🔷 FIGURE 3: Inputs
 # =========================================================
 plt.figure()
 for i in range(N):
-    norm_u = np.linalg.norm(u_traj[:, i, :], axis=1)
-    plt.plot(time, norm_u)
-plt.title("Control Inputs $||u_i(t)||$")
-plt.xlabel("Time (s)")
-plt.ylabel("||u||")
+    plt.plot(time, u_traj[:, i, 0])
+plt.title("Control inputs u_i(t)")
+plt.xlabel("Time")
+plt.ylabel("u")
 plt.grid()
 
 plt.show()
