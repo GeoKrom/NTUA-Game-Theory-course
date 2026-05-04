@@ -26,7 +26,7 @@ K = np.linalg.inv(R) @ B.T @ P
 
 # Initial state
 x = np.random.randn(N, dim)
-
+total_effort = 0
 trajectory = np.zeros((steps, N, dim))
 u_traj = np.zeros((steps, N))
 
@@ -42,7 +42,7 @@ for k in range(steps):
 
         u_i = -K @ consensus
         w = sigma * np.random.randn(dim)
-
+        total_effort += np.linalg.norm(u_i)**2 * dt
         x_dot[i] = A @ x[i] + B.flatten() * u_i + w
         u_traj[k, i] = u_i
 
@@ -50,7 +50,7 @@ for k in range(steps):
     x = x + dt * x_dot
 
 time = np.linspace(0, T, steps)
-
+print(total_effort)
 # =========================================================
 # 🔷 1. Trajectories
 # =========================================================
