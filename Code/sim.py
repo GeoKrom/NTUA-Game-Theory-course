@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.linalg import solve_continuous_are
 
 # ==========================================================
 # PARAMETERS
@@ -9,18 +8,21 @@ from scipy.linalg import solve_continuous_are
 N = 5
 
 dt = 0.01
-Tf = 20
+Tf = 30
 
 steps = int(Tf/dt)
 
 # ==========================================================
 # AGENT DYNAMICS
+#
 # x_dot = A x + B u + w
+#
+# x = [position velocity]^T
 # ==========================================================
 
 A = np.array([
-    [0, 1],
-    [0, 0]
+    [1,1],
+    [0,0]
 ])
 
 B = np.array([
@@ -29,7 +31,8 @@ B = np.array([
 ])
 
 # ==========================================================
-# COMMUNICATION GRAPH (Ring)
+# COMMUNICATION GRAPH
+# Ring Topology
 # ==========================================================
 
 Adj = np.array([
@@ -45,37 +48,40 @@ Deg = np.diag(np.sum(Adj,axis=1))
 L = Deg - Adj
 
 # ==========================================================
-# LQR DESIGN
+# IMITATION DYNAMICS
 # ==========================================================
 
-Q = np.diag([20,5])
-
-R = np.array([[1]])
-
-P = solve_continuous_are(A,B,Q,R)
-
-K = np.linalg.inv(R) @ B.T @ P
-
-print("LQR Gain:")
-print(K)
-
-# ==========================================================
-# INITIAL CONDITIONS
-# ==========================================================
-
-X = np.array([
-    [-8,  2],
-    [ 5, -1],
-    [10,  1],
-    [-4, -2],
-    [ 2,  3]
-], dtype=float)
+gamma = 0.5
 
 # ==========================================================
 # NOISE
 # ==========================================================
 
-sigma = 0.03
+sigma = 0.01
+
+# ==========================================================
+# INITIAL STATES
+# ==========================================================
+
+X = np.array([
+    [-8, 2],
+    [ 6,-2],
+    [ 4, 1],
+    [-3,-1],
+    [10, 3]
+],dtype=float)
+
+# ==========================================================
+# INITIAL STRATEGIES
+# ==========================================================
+
+theta = np.array([
+    0.5,
+    2.0,
+    1.0,
+    3.0,
+    4.0
+])
 
 # ==========================================================
 # STORAGE
@@ -83,19 +89,32 @@ sigma = 0.03
 
 state_hist = np.zeros((steps,N,2))
 
-u_hist = np.zeros((steps,N))
+theta_hist = np.zeros((steps,N))
 
-cost_hist = np.zeros((steps,N))
+u_hist = np.zeros((steps,N))
 
 consensus_hist = np.zeros((steps,N))
 
+cost_hist = np.zeros((steps,N))
+
 # ==========================================================
-# SIMULATION
+# COST WEIGHTS
+# ==========================================================
+
+Q = np.diag([1,2])
+
+R = 1.0
+
+rho = 1.0
+
+# ==========================================================
+# MAIN LOOP
 # ==========================================================
 
 for k in range(steps):
 
     state_hist[k] = X
+    theta_hist[k] = theta
 
     U = np.zeros(N)
 
@@ -105,34 +124,41 @@ for k in range(steps):
 
     for i in range(N):
 
-        e_i = np.zeros((2,1))
+        ei = np.zeros(2)
 
         for j in range(N):
 
             if Adj[i,j] == 1:
 
-                e_i += (
-                    X[i].reshape(-1,1)
-                    -
-                    X[j].reshape(-1,1)
-                )
+                ei += X[i] - X[j]
 
-        consensus_hist[k,i] = np.linalg.norm(e_i)
+        consensus_hist[k,i] = np.linalg.norm(ei)
 
-        # Distributed Nash-LQR Controller
-        u_i = -K @ e_i
+        ui = -theta[i] * ei[0]
 
-        U[i] = u_i.item()
+        U[i] = ui
 
-        u_hist[k,i] = U[i]
+        u_hist[k,i] = ui
 
-        J_i = (
-            e_i.T @ Q @ e_i
+        strategy_cost = 0
+
+        for j in range(N):
+
+            if Adj[i,j] == 1:
+
+                strategy_cost += (
+                    theta[i]-theta[j]
+                )**2
+
+        Ji = (
+            ei.T @ Q @ ei
             +
-            u_i.T @ R @ u_i
+            R*ui**2
+            +
+            rho*strategy_cost
         )
 
-        cost_hist[k,i] = J_i.item()
+        cost_hist[k,i] = Ji
 
     # ------------------------------------------------------
     # STATE UPDATE
@@ -152,8 +178,28 @@ for k in range(steps):
 
         X[i] += dt*xdot
 
+    # ------------------------------------------------------
+    # IMITATION UPDATE
+    # ------------------------------------------------------
+
+    theta_dot = np.zeros(N)
+
+    for i in range(N):
+
+        for j in range(N):
+
+            if Adj[i,j] == 1:
+
+                theta_dot[i] += (
+                    theta[j]
+                    -
+                    theta[i]
+                )
+
+    theta += dt*gamma*theta_dot
+
 # ==========================================================
-# TIME
+# TIME VECTOR
 # ==========================================================
 
 t = np.arange(steps)*dt
@@ -165,6 +211,7 @@ t = np.arange(steps)*dt
 plt.figure(figsize=(8,5))
 
 for i in range(N):
+
     plt.plot(
         t,
         state_hist[:,i,0],
@@ -185,6 +232,7 @@ plt.show()
 plt.figure(figsize=(8,5))
 
 for i in range(N):
+
     plt.plot(
         t,
         state_hist[:,i,1],
@@ -199,12 +247,34 @@ plt.legend()
 plt.show()
 
 # ==========================================================
+# STRATEGY EVOLUTION
+# ==========================================================
+
+plt.figure(figsize=(8,5))
+
+for i in range(N):
+
+    plt.plot(
+        t,
+        theta_hist[:,i],
+        label=f'θ{i+1}'
+    )
+
+plt.title('Imitation Dynamics')
+plt.xlabel('Time [s]')
+plt.ylabel('Strategy Parameter')
+plt.grid(True)
+plt.legend()
+plt.show()
+
+# ==========================================================
 # CONTROL INPUTS
 # ==========================================================
 
 plt.figure(figsize=(8,5))
 
 for i in range(N):
+
     plt.plot(
         t,
         u_hist[:,i],
@@ -213,7 +283,7 @@ for i in range(N):
 
 plt.title('Control Inputs')
 plt.xlabel('Time [s]')
-plt.ylabel('$u_i$')
+plt.ylabel('u_i')
 plt.grid(True)
 plt.legend()
 plt.show()
@@ -225,6 +295,7 @@ plt.show()
 plt.figure(figsize=(8,5))
 
 for i in range(N):
+
     plt.plot(
         t,
         u_hist[:,i]**2,
@@ -233,27 +304,28 @@ for i in range(N):
 
 plt.title('Control Effort')
 plt.xlabel('Time [s]')
-plt.ylabel('$u_i^2$')
+plt.ylabel('u_i²')
 plt.grid(True)
 plt.legend()
 plt.show()
 
 # ==========================================================
-# CONSENSUS ERROR
+# CONSENSUS ERRORS
 # ==========================================================
 
 plt.figure(figsize=(8,5))
 
 for i in range(N):
+
     plt.plot(
         t,
         consensus_hist[:,i],
         label=f'Agent {i+1}'
     )
 
-plt.title('Consensus Error')
+plt.title('Consensus Errors')
 plt.xlabel('Time [s]')
-plt.ylabel(r'$||e_i||$')
+plt.ylabel('||e_i||')
 plt.grid(True)
 plt.legend()
 plt.show()
@@ -265,6 +337,7 @@ plt.show()
 plt.figure(figsize=(8,5))
 
 for i in range(N):
+
     plt.plot(
         t,
         cost_hist[:,i],
@@ -273,7 +346,7 @@ for i in range(N):
 
 plt.title('Local Nash Costs')
 plt.xlabel('Time [s]')
-plt.ylabel('$J_i$')
+plt.ylabel('J_i')
 plt.grid(True)
 plt.legend()
 plt.show()
@@ -285,23 +358,16 @@ plt.show()
 plt.figure(figsize=(8,6))
 
 for i in range(N):
+
     plt.plot(
         state_hist[:,i,0],
         state_hist[:,i,1],
         label=f'Agent {i+1}'
     )
 
+plt.title('Phase Portrait')
 plt.xlabel('Position')
 plt.ylabel('Velocity')
-plt.title('Phase Portraits')
 plt.grid(True)
 plt.legend()
 plt.show()
-
-# ==========================================================
-# FINAL CONSENSUS POINT
-# ==========================================================
-
-final_consensus = np.mean(X[:,0])
-
-print("\nConsensus Point = ", final_consensus)
